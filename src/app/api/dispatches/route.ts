@@ -5,7 +5,7 @@ export async function GET() {
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
     .from("dispatches")
-    .select("id, invoice_number, started_at, arrived_at")
+    .select("id, invoice_number, started_at, first_arrived_at, last_arrived_at")
     .order("started_at", { ascending: false });
 
   if (error) {
@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
   const { data, error } = await supabase
     .from("dispatches")
     .insert({ invoice_number: invoiceNumber })
-    .select("id, invoice_number, started_at, arrived_at")
+    .select("id, invoice_number, started_at, first_arrived_at, last_arrived_at")
     .single();
 
   if (error) {

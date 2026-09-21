@@ -202,6 +202,12 @@ button { font-family: var(--font-work-sans), sans-serif; cursor: pointer; }
 }
 .transit-row .actions { display: flex; gap: 8px; align-items: center; }
 
+.transit-row.partial { border-left-color: var(--accent); }
+.transit-row .elapsed.partial {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
 .empty-note {
   color: var(--ink-soft);
   font-size: 0.88rem;
@@ -225,7 +231,7 @@ button { font-family: var(--font-work-sans), sans-serif; cursor: pointer; }
 .search-input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 
 .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
-table { border-collapse: collapse; width: 100%; min-width: 560px; }
+table { border-collapse: collapse; width: 100%; min-width: 640px; }
 thead th {
   text-align: left;
   font-size: 0.72rem;

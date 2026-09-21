@@ -8,16 +8,21 @@ export async function PATCH(
   const { id } = await params;
   const body = await request.json().catch(() => null);
 
-  if (body?.action !== "arrive") {
+  let update: { first_arrived_at?: string; last_arrived_at?: string };
+  if (body?.action === "first-arrive") {
+    update = { first_arrived_at: new Date().toISOString() };
+  } else if (body?.action === "last-arrive") {
+    update = { last_arrived_at: new Date().toISOString() };
+  } else {
     return NextResponse.json({ error: "unsupported action" }, { status: 400 });
   }
 
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
     .from("dispatches")
-    .update({ arrived_at: new Date().toISOString() })
+    .update(update)
     .eq("id", id)
-    .select("id, invoice_number, started_at, arrived_at")
+    .select("id, invoice_number, started_at, first_arrived_at, last_arrived_at")
     .single();
 
   if (error) {

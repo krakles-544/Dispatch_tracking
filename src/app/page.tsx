@@ -74,13 +74,23 @@ export default function Home() {
   }, []);
 
   const inTransit = useMemo(
-    () => records.filter((r) => !r.arrived_at).sort((a, b) => +new Date(a.started_at) - +new Date(b.started_at)),
+    () =>
+      records
+        .filter((r) => !r.first_arrived_at && !r.last_arrived_at)
+        .sort((a, b) => +new Date(a.started_at) - +new Date(b.started_at)),
+    [records]
+  );
+  const partiallyArrived = useMemo(
+    () =>
+      records
+        .filter((r) => r.first_arrived_at && !r.last_arrived_at)
+        .sort((a, b) => +new Date(a.first_arrived_at as string) - +new Date(b.first_arrived_at as string)),
     [records]
   );
   const completed = useMemo(
     () =>
       records
-        .filter((r) => r.arrived_at)
+        .filter((r) => r.last_arrived_at)
         .sort((a, b) => +new Date(b.started_at) - +new Date(a.started_at)),
     [records]
   );
@@ -92,7 +102,7 @@ export default function Home() {
   const avgToday =
     todays.length > 0
       ? fmtDuration(
-          todays.reduce((sum, r) => sum + (+new Date(r.arrived_at as string) - +new Date(r.started_at)), 0) /
+          todays.reduce((sum, r) => sum + (+new Date(r.last_arrived_at as string) - +new Date(r.started_at)), 0) /
             todays.length
         )
       : "–";
@@ -117,18 +127,35 @@ export default function Home() {
     }
   }
 
-  async function markArrived(rec: Dispatch) {
+  async function markFirstArrived(rec: Dispatch) {
     try {
       const res = await fetch(`/api/dispatches/${rec.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "arrive" }),
+        body: JSON.stringify({ action: "first-arrive" }),
+      });
+      if (!res.ok) throw new Error("failed");
+      const data = await res.json();
+      setRecords((prev) => prev.map((r) => (r.id === rec.id ? data.dispatch : r)));
+      toast("First item for INV-" + rec.invoice_number + " arrived");
+    } catch {
+      toast("Could not update — try again");
+    }
+  }
+
+  async function markLastArrived(rec: Dispatch) {
+    try {
+      const res = await fetch(`/api/dispatches/${rec.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "last-arrive" }),
       });
       if (!res.ok) throw new Error("failed");
       const data = await res.json();
       setRecords((prev) => prev.map((r) => (r.id === rec.id ? data.dispatch : r)));
       toast(
-        "INV-" + rec.invoice_number + " marked arrived — " + fmtDuration(+new Date(data.dispatch.arrived_at) - +new Date(rec.started_at))
+        "INV-" + rec.invoice_number + " fully arrived — total duration " +
+          fmtDuration(+new Date(data.dispatch.last_arrived_at) - +new Date(rec.started_at))
       );
     } catch {
       toast("Could not update — try again");
@@ -172,9 +199,16 @@ export default function Home() {
 
   async function copyCsv() {
     const rows = completed.map((r) =>
-      [fmtDate(r.started_at), "INV-" + r.invoice_number, fmtTime(r.started_at), fmtTime(r.arrived_at as string), fmtDuration(+new Date(r.arrived_at as string) - +new Date(r.started_at))].join(",")
+      [
+        fmtDate(r.started_at),
+        "INV-" + r.invoice_number,
+        fmtTime(r.started_at),
+        fmtTime(r.first_arrived_at as string),
+        fmtTime(r.last_arrived_at as string),
+        fmtDuration(+new Date(r.last_arrived_at as string) - +new Date(r.started_at)),
+      ].join(",")
     );
-    const csv = "Date,Invoice Number,Dispatched,Arrived,Duration\n" + rows.join("\n");
+    const csv = "Date,Invoice Number,Dispatched,First Arrived,Last Arrived,Duration\n" + rows.join("\n");
     try {
       if (navigator.clipboard && navigator.clipboard.writeText) {
         await navigator.clipboard.writeText(csv);
@@ -195,8 +229,9 @@ export default function Home() {
         <p className="eyebrow">Vintage Interiors Kenya · Dispatch Desk</p>
         <h1>Dispatch Log</h1>
         <p className="sub">
-          Press start when a delivery leaves, press arrived when it lands. Times and duration are timestamped
-          automatically — only the invoice number is typed. Synced between your desktop and laptop.
+          Press start when a delivery leaves. Since a dispatch can hold several items, log when the first item
+          lands and again when the last one does — duration is timestamped automatically from just the invoice
+          number. Synced between your desktop and laptop.
         </p>
       </header>
 
@@ -206,7 +241,7 @@ export default function Home() {
           <span className="label">Dispatched today</span>
         </div>
         <div className="stat transit">
-          <span className="num mono">{inTransit.length}</span>
+          <span className="num mono">{inTransit.length + partiallyArrived.length}</span>
           <span className="label">In transit</span>
         </div>
         <div className="stat">
@@ -258,8 +293,37 @@ export default function Home() {
                 </div>
                 <span className="elapsed mono">{fmtDuration(now - +new Date(r.started_at))}</span>
                 <div className="actions">
-                  <button className="btn btn-secondary btn-sm" onClick={() => markArrived(r)}>
-                    Mark arrived
+                  <button className="btn btn-secondary btn-sm" onClick={() => markFirstArrived(r)}>
+                    First item arrived
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </section>
+
+      <section>
+        <div className="section-head">
+          <h2>Partially arrived</h2>
+          <span className="count-chip mono">{partiallyArrived.length}</span>
+        </div>
+        <div className="transit-list">
+          {partiallyArrived.length === 0 ? (
+            <div className="empty-note">Nothing waiting on remaining items.</div>
+          ) : (
+            partiallyArrived.map((r) => (
+              <div className="transit-row partial" key={r.id}>
+                <div className="who">
+                  <span className="note">INV-{r.invoice_number}</span>
+                  <span className="since">first item at {fmtTime(r.first_arrived_at as string)}</span>
+                </div>
+                <span className="elapsed mono partial">
+                  {fmtDuration(now - +new Date(r.first_arrived_at as string))}
+                </span>
+                <div className="actions">
+                  <button className="btn btn-secondary btn-sm" onClick={() => markLastArrived(r)}>
+                    Last item arrived
                   </button>
                 </div>
               </div>
@@ -305,7 +369,8 @@ export default function Home() {
                 <th>Date</th>
                 <th>Invoice #</th>
                 <th>Out</th>
-                <th>In</th>
+                <th>First in</th>
+                <th>Last in</th>
                 <th>Duration</th>
                 <th></th>
               </tr>
@@ -313,7 +378,7 @@ export default function Home() {
             <tbody>
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="empty-note" style={{ border: "none" }}>
+                  <td colSpan={7} className="empty-note" style={{ border: "none" }}>
                     {query ? `No dispatches match "${query}".` : "No completed dispatches yet."}
                   </td>
                 </tr>
@@ -323,9 +388,10 @@ export default function Home() {
                     <td>{fmtDate(r.started_at)}</td>
                     <td className="note">INV-{r.invoice_number}</td>
                     <td className="time">{fmtTime(r.started_at)}</td>
-                    <td className="time">{fmtTime(r.arrived_at as string)}</td>
+                    <td className="time">{fmtTime(r.first_arrived_at as string)}</td>
+                    <td className="time">{fmtTime(r.last_arrived_at as string)}</td>
                     <td className="duration">
-                      {fmtDuration(+new Date(r.arrived_at as string) - +new Date(r.started_at))}
+                      {fmtDuration(+new Date(r.last_arrived_at as string) - +new Date(r.started_at))}
                     </td>
                     <td>
                       <button
