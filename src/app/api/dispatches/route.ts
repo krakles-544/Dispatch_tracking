@@ -5,7 +5,7 @@ export async function GET() {
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
     .from("dispatches")
-    .select("id, note, started_at, arrived_at")
+    .select("id, invoice_number, started_at, arrived_at")
     .order("started_at", { ascending: false });
 
   if (error) {
@@ -16,16 +16,16 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null);
-  const note = typeof body?.note === "string" ? body.note.trim() : "";
-  if (!note) {
-    return NextResponse.json({ error: "note is required" }, { status: 400 });
+  const invoiceNumber = typeof body?.invoice_number === "string" ? body.invoice_number.trim() : "";
+  if (!invoiceNumber) {
+    return NextResponse.json({ error: "invoice_number is required" }, { status: 400 });
   }
 
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
     .from("dispatches")
-    .insert({ note })
-    .select("id, note, started_at, arrived_at")
+    .insert({ invoice_number: invoiceNumber })
+    .select("id, invoice_number, started_at, arrived_at")
     .single();
 
   if (error) {

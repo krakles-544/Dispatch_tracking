@@ -1,6 +1,6 @@
 export type Dispatch = {
   id: string;
-  note: string;
+  invoice_number: string;
   started_at: string;
   arrived_at: string | null;
 };
@@ -10,7 +10,7 @@ export type Database = {
     Tables: {
       dispatches: {
         Row: Dispatch & { created_at: string };
-        Insert: { note: string };
+        Insert: { invoice_number: string };
         Update: { arrived_at?: string | null };
         Relationships: [];
       };

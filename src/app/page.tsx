@@ -32,7 +32,7 @@ export default function Home() {
   const [records, setRecords] = useState<Dispatch[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [syncStatus, setSyncStatus] = useState("Connecting…");
-  const [note, setNote] = useState("");
+  const [invoiceNumber, setInvoiceNumber] = useState("");
   const [query, setQuery] = useState("");
   const [armedDelete, setArmedDelete] = useState<string | null>(null);
   const [armedReset, setArmedReset] = useState(false);
@@ -86,7 +86,7 @@ export default function Home() {
   );
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return q ? completed.filter((r) => r.note.toLowerCase().includes(q)) : completed;
+    return q ? completed.filter((r) => r.invoice_number.toLowerCase().includes(q)) : completed;
   }, [completed, query]);
   const todays = useMemo(() => completed.filter((r) => isToday(r.started_at)), [completed]);
   const avgToday =
@@ -99,19 +99,19 @@ export default function Home() {
 
   async function startDispatch(e: React.FormEvent) {
     e.preventDefault();
-    const trimmed = note.trim();
+    const trimmed = invoiceNumber.trim();
     if (!trimmed) return;
-    setNote("");
+    setInvoiceNumber("");
     try {
       const res = await fetch("/api/dispatches", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ note: trimmed }),
+        body: JSON.stringify({ invoice_number: trimmed }),
       });
       if (!res.ok) throw new Error("failed");
       const data = await res.json();
       setRecords((prev) => [data.dispatch, ...prev]);
-      toast("Dispatch DN-" + trimmed + " started");
+      toast("Dispatch INV-" + trimmed + " started");
     } catch {
       toast("Could not save dispatch — try again");
     }
@@ -128,7 +128,7 @@ export default function Home() {
       const data = await res.json();
       setRecords((prev) => prev.map((r) => (r.id === rec.id ? data.dispatch : r)));
       toast(
-        "DN-" + rec.note + " marked arrived — " + fmtDuration(+new Date(data.dispatch.arrived_at) - +new Date(rec.started_at))
+        "INV-" + rec.invoice_number + " marked arrived — " + fmtDuration(+new Date(data.dispatch.arrived_at) - +new Date(rec.started_at))
       );
     } catch {
       toast("Could not update — try again");
@@ -172,9 +172,9 @@ export default function Home() {
 
   async function copyCsv() {
     const rows = completed.map((r) =>
-      [fmtDate(r.started_at), "DN-" + r.note, fmtTime(r.started_at), fmtTime(r.arrived_at as string), fmtDuration(+new Date(r.arrived_at as string) - +new Date(r.started_at))].join(",")
+      [fmtDate(r.started_at), "INV-" + r.invoice_number, fmtTime(r.started_at), fmtTime(r.arrived_at as string), fmtDuration(+new Date(r.arrived_at as string) - +new Date(r.started_at))].join(",")
     );
-    const csv = "Date,Delivery Note,Dispatched,Arrived,Duration\n" + rows.join("\n");
+    const csv = "Date,Invoice Number,Dispatched,Arrived,Duration\n" + rows.join("\n");
     try {
       if (navigator.clipboard && navigator.clipboard.writeText) {
         await navigator.clipboard.writeText(csv);
@@ -196,7 +196,7 @@ export default function Home() {
         <h1>Dispatch Log</h1>
         <p className="sub">
           Press start when a delivery leaves, press arrived when it lands. Times and duration are timestamped
-          automatically — only the delivery note number is typed. Synced between your desktop and laptop.
+          automatically — only the invoice number is typed. Synced between your desktop and laptop.
         </p>
       </header>
 
@@ -219,17 +219,17 @@ export default function Home() {
         <div className="card">
           <form className="start-form" onSubmit={startDispatch}>
             <div className="field">
-              <label htmlFor="noteInput">Delivery note number</label>
+              <label htmlFor="invoiceInput">Invoice number</label>
               <input
-                id="noteInput"
-                name="note"
+                id="invoiceInput"
+                name="invoice_number"
                 type="text"
                 inputMode="numeric"
                 autoComplete="off"
                 placeholder="e.g. 1042"
                 required
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
+                value={invoiceNumber}
+                onChange={(e) => setInvoiceNumber(e.target.value)}
               />
             </div>
             <button type="submit" className="btn btn-primary">
@@ -253,7 +253,7 @@ export default function Home() {
             inTransit.map((r) => (
               <div className="transit-row" key={r.id}>
                 <div className="who">
-                  <span className="note">DN-{r.note}</span>
+                  <span className="note">INV-{r.invoice_number}</span>
                   <span className="since">left at {fmtTime(r.started_at)}</span>
                 </div>
                 <span className="elapsed mono">{fmtDuration(now - +new Date(r.started_at))}</span>
@@ -277,7 +277,7 @@ export default function Home() {
           <input
             className="search-input"
             type="search"
-            placeholder="Filter by delivery note number…"
+            placeholder="Filter by invoice number…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
@@ -303,7 +303,7 @@ export default function Home() {
             <thead>
               <tr>
                 <th>Date</th>
-                <th>Note #</th>
+                <th>Invoice #</th>
                 <th>Out</th>
                 <th>In</th>
                 <th>Duration</th>
@@ -321,7 +321,7 @@ export default function Home() {
                 filtered.map((r) => (
                   <tr key={r.id}>
                     <td>{fmtDate(r.started_at)}</td>
-                    <td className="note">DN-{r.note}</td>
+                    <td className="note">INV-{r.invoice_number}</td>
                     <td className="time">{fmtTime(r.started_at)}</td>
                     <td className="time">{fmtTime(r.arrived_at as string)}</td>
                     <td className="duration">

@@ -17,7 +17,7 @@ export async function PATCH(
     .from("dispatches")
     .update({ arrived_at: new Date().toISOString() })
     .eq("id", id)
-    .select("id, note, started_at, arrived_at")
+    .select("id, invoice_number, started_at, arrived_at")
     .single();
 
   if (error) {
