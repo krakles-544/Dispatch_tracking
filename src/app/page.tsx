@@ -348,6 +348,9 @@ export default function Home() {
           <button className="btn btn-ghost btn-sm" type="button" onClick={copyCsv}>
             Copy as CSV
           </button>
+          <a className="btn btn-ghost btn-sm" href="/api/dispatches/export">
+            Download Excel
+          </a>
         </div>
         {csvFallback !== null && (
           <textarea
