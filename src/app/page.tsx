@@ -228,11 +228,6 @@ export default function Home() {
       <header className="page-head">
         <p className="eyebrow">Vintage Interiors Kenya · Dispatch Desk</p>
         <h1>Dispatch Log</h1>
-        <p className="sub">
-          Press start when a delivery leaves. Since a dispatch can hold several items, log when the first item
-          lands and again when the last one does — duration is timestamped automatically from just the invoice
-          number. Synced between your desktop and laptop.
-        </p>
       </header>
 
       <div className="stats">
