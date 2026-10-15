@@ -1,9 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import gsap from "gsap";
 import type { Dispatch } from "@/lib/types";
 
 const POLL_MS = 4000;
+
+function prefersReducedMotion() {
+  return typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
 
 function fmtTime(iso: string) {
   return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
@@ -15,6 +20,11 @@ function isToday(iso: string) {
   const a = new Date(iso);
   const b = new Date();
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+// datetime-local inputs want local wall-clock "YYYY-MM-DDTHH:mm".
+function toLocalInput(iso: string) {
+  const d = new Date(iso);
+  return new Date(+d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 }
 function fmtDuration(ms: number) {
   const totalMin = Math.max(0, Math.round(ms / 60000));
@@ -39,10 +49,17 @@ export default function Home() {
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [csvFallback, setCsvFallback] = useState<string | null>(null);
+  const [manualOpen, setManualOpen] = useState(false);
+  const [manual, setManual] = useState({ invoice: "", started: "", first: "", last: "" });
+  const [manualSaving, setManualSaving] = useState(false);
+  const [timeEntry, setTimeEntry] = useState<{ id: string; value: string } | null>(null);
 
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const armDeleteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const armResetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const toastRef = useRef<HTMLDivElement | null>(null);
+  const prevStageRef = useRef<Map<string, string>>(new Map());
 
   function toast(msg: string) {
     setToastMsg(msg);
@@ -72,6 +89,58 @@ export default function Home() {
       clearInterval(tick);
     };
   }, []);
+
+  useLayoutEffect(() => {
+    if (prefersReducedMotion() || !wrapRef.current) return;
+    const ctx = gsap.context(() => {
+      const targets = gsap.utils.toArray<HTMLElement>(
+        ".page-head, .stats .stat, .card, .section-head, .transit-list, .history-controls, .table-wrap, footer"
+      );
+      gsap.set(targets, { opacity: 0, y: 14 });
+      gsap.to(targets, { opacity: 1, y: 0, duration: 0.5, ease: "power2.out", stagger: 0.05 });
+    }, wrapRef);
+    return () => ctx.revert();
+  }, []);
+
+  useEffect(() => {
+    if (!loaded) return;
+    const nextStage = new Map<string, string>();
+    const changed: string[] = [];
+    for (const r of records) {
+      const stage = r.last_arrived_at ? "done" : r.first_arrived_at ? "partial" : "transit";
+      nextStage.set(r.id, stage);
+      if (prevStageRef.current.get(r.id) !== stage) changed.push(r.id);
+    }
+    const isFirstPass = prevStageRef.current.size === 0;
+    prevStageRef.current = nextStage;
+    if (!changed.length || isFirstPass || prefersReducedMotion()) return;
+    requestAnimationFrame(() => {
+      changed.forEach((id) => {
+        const el = wrapRef.current?.querySelector<HTMLElement>(`[data-row-id="${id}"]`);
+        if (el) {
+          gsap.fromTo(
+            el,
+            { opacity: 0, y: -10, scale: 0.98 },
+            { opacity: 1, y: 0, scale: 1, duration: 0.4, ease: "back.out(1.6)" }
+          );
+        }
+      });
+    });
+  }, [records, loaded]);
+
+  useEffect(() => {
+    if (!toastRef.current) return;
+    if (prefersReducedMotion()) {
+      gsap.set(toastRef.current, { opacity: toastMsg ? 1 : 0, y: toastMsg ? -6 : 8 });
+      return;
+    }
+    gsap.to(toastRef.current, {
+      opacity: toastMsg ? 1 : 0,
+      y: toastMsg ? -6 : 8,
+      duration: 0.28,
+      ease: toastMsg ? "back.out(1.7)" : "power1.in",
+    });
+  }, [toastMsg]);
 
   const inTransit = useMemo(
     () =>
@@ -127,39 +196,113 @@ export default function Home() {
     }
   }
 
-  async function markFirstArrived(rec: Dispatch) {
+  async function addManualEntry(e: React.FormEvent) {
+    e.preventDefault();
+    const invoice = manual.invoice.trim();
+    if (!invoice || !manual.started) return;
+    if (manual.last && !manual.first) {
+      toast("Enter the first arrival time too");
+      return;
+    }
+    // datetime-local values are local wall-clock time; convert to ISO here so the server stores the right instant.
+    const toIso = (v: string) => (v ? new Date(v).toISOString() : undefined);
+    const started_at = toIso(manual.started) as string;
+    const first_arrived_at = toIso(manual.first);
+    const last_arrived_at = toIso(manual.last);
+    if ((first_arrived_at && first_arrived_at < started_at) || (last_arrived_at && first_arrived_at && last_arrived_at < first_arrived_at)) {
+      toast("Times must be in order: out → first in → last in");
+      return;
+    }
+    setManualSaving(true);
     try {
-      const res = await fetch(`/api/dispatches/${rec.id}`, {
-        method: "PATCH",
+      const res = await fetch("/api/dispatches", {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "first-arrive" }),
+        body: JSON.stringify({ invoice_number: invoice, started_at, first_arrived_at, last_arrived_at }),
       });
-      if (!res.ok) throw new Error("failed");
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || "failed");
+      }
       const data = await res.json();
-      setRecords((prev) => prev.map((r) => (r.id === rec.id ? data.dispatch : r)));
-      toast("First item for INV-" + rec.invoice_number + " arrived");
-    } catch {
-      toast("Could not update — try again");
+      setRecords((prev) => [data.dispatch, ...prev]);
+      setManual({ invoice: "", started: "", first: "", last: "" });
+      toast("Entry INV-" + invoice + " added");
+    } catch (err) {
+      toast("Could not add entry — " + (err instanceof Error && err.message !== "failed" ? err.message : "try again"));
+    } finally {
+      setManualSaving(false);
     }
   }
 
-  async function markLastArrived(rec: Dispatch) {
+  async function markArrived(rec: Dispatch, action: "first-arrive" | "last-arrive", at?: string) {
     try {
       const res = await fetch(`/api/dispatches/${rec.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "last-arrive" }),
+        body: JSON.stringify({ action, at }),
       });
-      if (!res.ok) throw new Error("failed");
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || "failed");
+      }
       const data = await res.json();
       setRecords((prev) => prev.map((r) => (r.id === rec.id ? data.dispatch : r)));
+      setTimeEntry(null);
       toast(
-        "INV-" + rec.invoice_number + " fully arrived — total duration " +
-          fmtDuration(+new Date(data.dispatch.last_arrived_at) - +new Date(rec.started_at))
+        action === "first-arrive"
+          ? "First item for INV-" + rec.invoice_number + " arrived"
+          : "INV-" + rec.invoice_number + " fully arrived — total duration " +
+              fmtDuration(+new Date(data.dispatch.last_arrived_at) - +new Date(rec.started_at))
       );
-    } catch {
-      toast("Could not update — try again");
+    } catch (err) {
+      toast("Could not update — " + (err instanceof Error && err.message !== "failed" ? err.message : "try again"));
     }
+  }
+
+  function saveEnteredTime(e: React.FormEvent, rec: Dispatch, action: "first-arrive" | "last-arrive") {
+    e.preventDefault();
+    if (!timeEntry?.value) return;
+    markArrived(rec, action, new Date(timeEntry.value).toISOString());
+  }
+
+  function renderArrivalActions(rec: Dispatch, action: "first-arrive" | "last-arrive") {
+    const label = action === "first-arrive" ? "First item arrived" : "Last item arrived";
+    const after = action === "first-arrive" ? rec.started_at : (rec.first_arrived_at as string);
+    if (timeEntry?.id === rec.id) {
+      return (
+        <form className="actions time-entry" onSubmit={(e) => saveEnteredTime(e, rec, action)}>
+          <input
+            type="datetime-local"
+            aria-label={label + " at"}
+            required
+            min={toLocalInput(after)}
+            max={toLocalInput(new Date(now).toISOString())}
+            value={timeEntry.value}
+            onChange={(e) => setTimeEntry({ id: rec.id, value: e.target.value })}
+          />
+          <button type="submit" className="btn btn-secondary btn-sm">Save</button>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setTimeEntry(null)}>
+            Cancel
+          </button>
+        </form>
+      );
+    }
+    return (
+      <div className="actions">
+        <button
+          type="button"
+          className="btn btn-ghost btn-sm"
+          title="Record the arrival at an earlier time"
+          onClick={() => setTimeEntry({ id: rec.id, value: toLocalInput(new Date().toISOString()) })}
+        >
+          Enter time
+        </button>
+        <button className="btn btn-secondary btn-sm" onClick={() => markArrived(rec, action)}>
+          {label}
+        </button>
+      </div>
+    );
   }
 
   function armDelete(id: string) {
@@ -168,8 +311,13 @@ export default function Home() {
     armDeleteTimer.current = setTimeout(() => setArmedDelete(null), 3000);
   }
 
-  async function confirmDelete(id: string) {
+  async function confirmDelete(id: string, rowEl: HTMLElement | null) {
     setArmedDelete(null);
+    if (rowEl && !prefersReducedMotion()) {
+      await new Promise<void>((resolve) => {
+        gsap.to(rowEl, { opacity: 0, x: -24, duration: 0.28, ease: "power1.in", onComplete: () => resolve() });
+      });
+    }
     try {
       const res = await fetch(`/api/dispatches/${id}`, { method: "DELETE" });
       if (!res.ok) throw new Error("failed");
@@ -224,7 +372,7 @@ export default function Home() {
   }
 
   return (
-    <div className="wrap">
+    <div className="wrap" ref={wrapRef}>
       <header className="page-head">
         <p className="eyebrow">Vintage Interiors Kenya · Dispatch Desk</p>
         <h1>Dispatch Log</h1>
@@ -266,6 +414,69 @@ export default function Home() {
               Start dispatch →
             </button>
           </form>
+          <button
+            type="button"
+            className="manual-toggle"
+            aria-expanded={manualOpen}
+            aria-controls="manualForm"
+            onClick={() => setManualOpen((o) => !o)}
+          >
+            {manualOpen ? "− Hide manual entry" : "+ Add a past entry manually"}
+          </button>
+          {manualOpen && (
+            <form id="manualForm" className="manual-form" onSubmit={addManualEntry}>
+              <div className="field">
+                <label htmlFor="manualInvoice">Invoice number</label>
+                <input
+                  id="manualInvoice"
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  placeholder="e.g. 1042"
+                  required
+                  value={manual.invoice}
+                  onChange={(e) => setManual((m) => ({ ...m, invoice: e.target.value }))}
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="manualStarted">Dispatched</label>
+                <input
+                  id="manualStarted"
+                  type="datetime-local"
+                  required
+                  value={manual.started}
+                  onChange={(e) => setManual((m) => ({ ...m, started: e.target.value }))}
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="manualFirst">First item arrived (optional)</label>
+                <input
+                  id="manualFirst"
+                  type="datetime-local"
+                  min={manual.started || undefined}
+                  value={manual.first}
+                  onChange={(e) => setManual((m) => ({ ...m, first: e.target.value }))}
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="manualLast">Last item arrived (optional)</label>
+                <input
+                  id="manualLast"
+                  type="datetime-local"
+                  min={manual.first || manual.started || undefined}
+                  disabled={!manual.first}
+                  value={manual.last}
+                  onChange={(e) => setManual((m) => ({ ...m, last: e.target.value }))}
+                />
+              </div>
+              <p className="manual-hint">
+                Leave the arrival times blank to put it in transit. Fill in both to add it straight to History.
+              </p>
+              <button type="submit" className="btn btn-primary" disabled={manualSaving}>
+                {manualSaving ? "Saving…" : "Add entry"}
+              </button>
+            </form>
+          )}
         </div>
       </section>
 
@@ -281,17 +492,13 @@ export default function Home() {
             <div className="empty-note">Nothing in transit right now.</div>
           ) : (
             inTransit.map((r) => (
-              <div className="transit-row" key={r.id}>
+              <div className="transit-row" key={r.id} data-row-id={r.id}>
                 <div className="who">
                   <span className="note">INV-{r.invoice_number}</span>
                   <span className="since">left at {fmtTime(r.started_at)}</span>
                 </div>
                 <span className="elapsed mono">{fmtDuration(now - +new Date(r.started_at))}</span>
-                <div className="actions">
-                  <button className="btn btn-secondary btn-sm" onClick={() => markFirstArrived(r)}>
-                    First item arrived
-                  </button>
-                </div>
+                {renderArrivalActions(r, "first-arrive")}
               </div>
             ))
           )}
@@ -308,7 +515,7 @@ export default function Home() {
             <div className="empty-note">Nothing waiting on remaining items.</div>
           ) : (
             partiallyArrived.map((r) => (
-              <div className="transit-row partial" key={r.id}>
+              <div className="transit-row partial" key={r.id} data-row-id={r.id}>
                 <div className="who">
                   <span className="note">INV-{r.invoice_number}</span>
                   <span className="since">first item at {fmtTime(r.first_arrived_at as string)}</span>
@@ -316,11 +523,7 @@ export default function Home() {
                 <span className="elapsed mono partial">
                   {fmtDuration(now - +new Date(r.first_arrived_at as string))}
                 </span>
-                <div className="actions">
-                  <button className="btn btn-secondary btn-sm" onClick={() => markLastArrived(r)}>
-                    Last item arrived
-                  </button>
-                </div>
+                {renderArrivalActions(r, "last-arrive")}
               </div>
             ))
           )}
@@ -382,7 +585,7 @@ export default function Home() {
                 </tr>
               ) : (
                 filtered.map((r) => (
-                  <tr key={r.id}>
+                  <tr key={r.id} data-row-id={r.id}>
                     <td>{fmtDate(r.started_at)}</td>
                     <td className="note">INV-{r.invoice_number}</td>
                     <td className="time">{fmtTime(r.started_at)}</td>
@@ -395,7 +598,11 @@ export default function Home() {
                       <button
                         className={`row-del${armedDelete === r.id ? " arm" : ""}`}
                         title="Delete entry"
-                        onClick={() => (armedDelete === r.id ? confirmDelete(r.id) : armDelete(r.id))}
+                        onClick={(e) =>
+                          armedDelete === r.id
+                            ? confirmDelete(r.id, e.currentTarget.closest("tr"))
+                            : armDelete(r.id)
+                        }
                       >
                         {armedDelete === r.id ? "Delete?" : "✕"}
                       </button>
@@ -419,7 +626,7 @@ export default function Home() {
         </button>
       </footer>
 
-      <div id="toast" className={toastMsg ? "show" : ""}>
+      <div id="toast" ref={toastRef}>
         {toastMsg}
       </div>
     </div>

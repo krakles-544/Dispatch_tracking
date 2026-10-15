@@ -11,7 +11,12 @@ export type Database = {
     Tables: {
       dispatches: {
         Row: Dispatch & { created_at: string };
-        Insert: { invoice_number: string };
+        Insert: {
+          invoice_number: string;
+          started_at?: string;
+          first_arrived_at?: string | null;
+          last_arrived_at?: string | null;
+        };
         Update: { first_arrived_at?: string | null; last_arrived_at?: string | null };
         Relationships: [];
       };
